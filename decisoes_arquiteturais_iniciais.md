@@ -203,3 +203,42 @@ class ProductService(
 *   Realizar o commit desta implementação no repositório Git.
 *   Começar a planejar a integração da IA para analisar estes artefatos de código e a documentação de decisão associada.
 *   Considerar a implementação de testes unitários para o `ProductService` e para as entidades de domínio.
+
+
+
+## 5. Considerações sobre Custos, Modelos de IA e Uso de Tokens (OpenAI)
+
+**Data da Discussão:** 12 de Maio de 2025
+
+**Contexto:**
+Conforme levantado pelo usuário, a utilização de APIs de Modelos de Linguagem de Grande Escala (LLMs), como as fornecidas pela OpenAI, implica custos que são metrificados pelo volume de tokens processados (tanto de entrada quanto de saída) e variam conforme o modelo escolhido (ex: GPT-3.5-turbo, GPT-4, etc.). É crucial que o projeto considere esses fatores para garantir sua viabilidade e sustentabilidade.
+
+**Decisões e Diretrizes Iniciais:**
+
+1.  **Monitoramento de Custos:** Desde o início, o uso da API da OpenAI deve ser monitorado. Ferramentas de acompanhamento de uso e custos fornecidas pela OpenAI devem ser consultadas regularmente.
+2.  **Escolha Consciente de Modelos:**
+    *   Para tarefas que não exigem a capacidade máxima dos modelos mais avançados (e caros), como resumos iniciais de documentos ou classificação simples, modelos mais econômicos (ex: GPT-3.5-turbo) devem ser priorizados.
+    *   Modelos mais poderosos (ex: GPT-4) devem ser reservados para tarefas que demandem maior profundidade de raciocínio, análise complexa de código ou geração de conteúdo crítico, e seu uso deve ser justificado.
+3.  **Otimização de Prompts e Consultas:**
+    *   As consultas (prompts) enviadas à IA devem ser o mais concisas e diretas possível, focando no essencial para obter a resposta desejada sem desperdiçar tokens com informações desnecessárias.
+    *   A quantidade de contexto fornecida à IA (ex: trechos de código, histórico de commits) deve ser cuidadosamente gerenciada. Técnicas como sumarização prévia de contextos longos ou seleção de trechos mais relevantes podem ser necessárias.
+    *   O tamanho da resposta esperada da IA também deve ser considerado, e os prompts podem incluir instruções para limitar a verbosidade da saída.
+4.  **Cache de Respostas:** Para consultas frequentes e idênticas, ou para informações que não mudam com tanta frequência, a implementação de um mecanismo de cache para as respostas da IA pode reduzir significativamente o número de chamadas à API e, consequentemente, os custos.
+5.  **Processamento em Lote (Batch Processing):** Quando aplicável, agrupar múltiplas pequenas tarefas em uma única chamada à API (se o modelo e a tarefa permitirem) pode ser mais eficiente do que múltiplas chamadas individuais.
+6.  **Limites de Uso e Alertas:** Configurar alertas de uso na plataforma da OpenAI para ser notificado quando os custos atingirem determinados patamares pode ajudar a evitar surpresas na fatura.
+7.  **Exploração de Alternativas (Médio/Longo Prazo):**
+    *   **Modelos Open Source:** O projeto deve manter no radar a evolução de modelos de linguagem open source que possam ser auto-hospedados (on-premise ou em nuvem privada). Embora isso possa envolver custos de infraestrutura e manutenção, pode ser uma alternativa viável para reduzir custos diretos de API a longo prazo, especialmente para tarefas de alto volume.
+    *   **Fine-tuning (Ajuste Fino):** Para tarefas muito específicas do projeto, o ajuste fino de modelos menores (open source ou mesmo modelos da OpenAI que suportem fine-tuning) com dados do próprio projeto pode levar a um desempenho comparável aos modelos maiores com um custo por inferência menor.
+    *   **Técnicas de Quantização e Otimização de Modelos:** Se modelos auto-hospedados forem considerados, técnicas para reduzir o tamanho do modelo e otimizar a inferência serão importantes.
+
+**Documentação Contínua:**
+
+*   Todas as escolhas de modelos de IA para diferentes funcionalidades do assistente, juntamente com suas justificativas de custo-benefício, devem ser documentadas.
+*   Estratégias de otimização de tokens implementadas devem ser registradas.
+
+**Próximos Passos Imediatos Relacionados a Custos:**
+
+*   Ao validar o fluxo de conhecimento da IA (resumo do documento), observar o consumo de tokens e o modelo utilizado (inicialmente `gpt-3.5-turbo` no script `leitor_documentacao.py`).
+*   Manter esta seção do documento de decisões atualizada conforme novas estratégias de gerenciamento de custos forem discutidas e implementadas.
+
+Esta abordagem proativa em relação aos custos garantirá que o IA Assistente seja não apenas poderoso, mas também economicamente sustentável para o projeto de estudo e futuras aplicações.
