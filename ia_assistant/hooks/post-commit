@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# Hook post-commit interativo para a Assistente de IA
+# Este script detecta commits significativos e solicita explicações detalhadas
+# para enriquecer o conhecimento da assistente de IA.
+
+# Configurações
+PROJECT_ROOT="/caminho/completo/para/ia-eccomerce-assistant"  # Ajuste para o caminho real do projeto
+MIN_FILES_THRESHOLD=5      # Número mínimo de arquivos para considerar um commit significativo
+MIN_LINES_THRESHOLD=100    # Número mínimo de linhas para considerar um commit significativo
+EXPLANATIONS_DIR=".github/commit_explanations"  # Diretório para armazenar explicações
+
+# Cores para melhor visualização
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}=== Assistente de IA: Analisando commit ====${NC}"
+
+# Obtém o hash do commit atual
+COMMIT_HASH=$(git rev-parse HEAD)
+COMMIT_MSG=$(git log -1 --pretty=%B)
+
+echo -e "${BLUE}Commit:${NC} $COMMIT_HASH"
+echo -e "${BLUE}Mensagem:${NC} $COMMIT_MSG"
+
+# Obtém estatísticas do commit
+STATS=$(git show --stat)
+FILES_CHANGED=$(echo "$STATS" | grep "changed" | awk '{print $1}')
+LINES_CHANGED=$(echo "$STATS" | grep "changed" | awk '{print $4}')
+
+# Se não conseguir extrair os números, tenta outro formato de saída do git
+if [ -z "$FILES_CHANGED" ] || [ -z "$LINES_CHANGED" ]; then
+    FILES_CHANGED=$(git diff --name-only HEAD^ HEAD | wc -l)
+    LINES_CHANGED=$(git diff --stat HEAD^ HEAD | tail -n1 | awk '{print $4}')
+fi
+
+# Verifica se ainda não conseguiu os números
+if [ -z "$FILES_CHANGED" ] || [ -z "$LINES_CHANGED" ]; then
+    FILES_CHANGED=$(git diff --name-only HEAD^ HEAD | wc -l)
+    LINES_CHANGED=0
+    git diff --stat HEAD^ HEAD | grep "|" | while read line; do
+        line_count=$(echo $line | awk '{print $3}' | tr -d '+-')
+        LINES_CHANGED=$((LINES_CHANGED + line_count))
+    done
+fi
+
+echo -e "${BLUE}Arquivos alterados:${NC} $FILES_CHANGED"
+echo -e "${BLUE}Linhas alteradas:${NC} $LINES_CHANGED"
+
+# Verifica se as alterações são significativas
+if [ "$FILES_CHANGED" -gt "$MIN_FILES_THRESHOLD" ] || [ "$LINES_CHANGED" -gt "$MIN_LINES_THRESHOLD" ]; then
+    echo -e "\n${YELLOW}Commit significativo detectado!${NC}"
+    echo -e "${YELLOW}Este commit alterou muitos arquivos ou linhas de código.${NC}"
+    echo -e "${YELLOW}Uma explicação detalhada ajudará a assistente de IA a entender melhor as mudanças.${NC}\n"
+    
+    # Solicita uma explicação detalhada
+    echo -e "${GREEN}Por favor, forneça uma explicação detalhada sobre este commit:${NC}"
+    echo -e "${GREEN}(Descreva o propósito das mudanças, impacto no sistema, decisões arquiteturais, etc.)${NC}"
+    echo -e "${GREEN}Digite sua explicação abaixo e finalize com uma linha contendo apenas 'FIM':${NC}\n"
+    
+    # Coleta a explicação linha por linha até encontrar "FIM"
+    EXPLANATION=""
+    while IFS= read -r line; do
+        if [ "$line" = "FIM" ]; then
+            break
+        fi
+        EXPLANATION="${EXPLANATION}${line}\n"
+    done
+    
+    # Cria o diretório para armazenar as explicações, se não existir
+    mkdir -p "$EXPLANATIONS_DIR"
+    
+    # Formata a explicação com metadados
+    FORMATTED_EXPLANATION="# Explicação Detalhada do Commit\n\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}**Commit:** ${COMMIT_HASH}\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}**Data:** $(date '+%Y-%m-%d %H:%M:%S')\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}**Arquivos alterados:** ${FILES_CHANGED}\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}**Linhas alteradas:** ${LINES_CHANGED}\n\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}## Mensagem do Commit\n\n${COMMIT_MSG}\n\n"
+    FORMATTED_EXPLANATION="${FORMATTED_EXPLANATION}## Explicação Detalhada\n\n${EXPLANATION}\n"
+    
+    # Salva a explicação em um arquivo
+    EXPLANATION_FILE="${EXPLANATIONS_DIR}/${COMMIT_HASH}.md"
+    echo -e "$FORMATTED_EXPLANATION" > "$EXPLANATION_FILE"
+    
+    echo -e "\n${GREEN}Explicação salva em:${NC} $EXPLANATION_FILE"
+    
+    # Adiciona o arquivo de explicação ao Git
+    git add "$EXPLANATION_FILE"
+    
+    # Amenda o commit atual para incluir o arquivo de explicação
+    git commit --amend -C HEAD --no-verify
+    
+    echo -e "\n${GREEN}Arquivo de explicação adicionado ao commit.${NC}"
+    
+    # Atualiza a base de conhecimento da assistente de IA
+    echo -e "\n${BLUE}Atualizando a base de conhecimento da assistente de IA...${NC}"
+    
+    # Verifica se o script da assistente existe e o executa
+    if [ -f "$PROJECT_ROOT/ia_assistant/main.py" ]; then
+        python -m ia_assistant.main --update --project-root "$PROJECT_ROOT"
+        echo -e "${GREEN}Base de conhecimento atualizada com sucesso!${NC}"
+    else
+        echo -e "${YELLOW}Aviso: Não foi possível encontrar o script da assistente de IA.${NC}"
+        echo -e "${YELLOW}A base de conhecimento não foi atualizada automaticamente.${NC}"
+        echo -e "${YELLOW}Execute manualmente: python -m ia_assistant.main --update${NC}"
+    fi
+else
+    echo -e "\n${GREEN}Commit regular detectado.${NC}"
+    echo -e "${GREEN}Atualizando a base de conhecimento da assistente de IA...${NC}"
+    
+    # Atualiza a base de conhecimento da assistente de IA
+    if [ -f "$PROJECT_ROOT/ia_assistant/main.py" ]; then
+        python -m ia_assistant.main --update --project-root "$PROJECT_ROOT"
+        echo -e "${GREEN}Base de conhecimento atualizada com sucesso!${NC}"
+    else
+        echo -e "${YELLOW}Aviso: Não foi possível encontrar o script da assistente de IA.${NC}"
+        echo -e "${YELLOW}A base de conhecimento não foi atualizada automaticamente.${NC}"
+        echo -e "${YELLOW}Execute manualmente: python -m ia_assistant.main --update${NC}"
+    fi
+fi
+
+echo -e "\n${BLUE}=== Processamento do commit concluído ====${NC}"
