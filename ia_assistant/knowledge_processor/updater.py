@@ -9,9 +9,17 @@ import time
 import hashlib
 import json
 import git
+import logging
 from typing import List, Dict, Any, Optional, Set, Tuple
 from pathlib import Path
 from datetime import datetime
+
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("knowledge_updater")
 
 # Importa os coletores de dados
 from ia_assistant.data_collector.collectors import (
@@ -58,7 +66,7 @@ class ChangeDetector:
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
-                print(f"Erro ao carregar cache: {e}")
+                logger.error(f"Erro ao carregar cache: {e}")
                 return self._create_empty_cache()
         else:
             return self._create_empty_cache()
@@ -124,7 +132,11 @@ class ChangeDetector:
             for file in files:
                 if any(file.endswith(ext) for ext in extensions):
                     file_path = os.path.join(root, file)
+                    # Ignora diretórios .git e venv
+                    if ".git" in file_path or "venv" in file_path:
+                        continue
                     current_files[file_path] = self._calculate_file_hash(file_path)
+                    logger.debug(f"Arquivo encontrado: {file_path}")
         
         # Compara com o cache
         cached_files = self.cache.get("files", {})
@@ -133,13 +145,16 @@ class ChangeDetector:
         for file_path, file_hash in current_files.items():
             if file_path not in cached_files:
                 changes["added"].append(file_path)
+                logger.info(f"Arquivo novo detectado: {file_path}")
             elif cached_files[file_path] != file_hash:
                 changes["modified"].append(file_path)
+                logger.info(f"Arquivo modificado detectado: {file_path}")
         
         # Detecta arquivos removidos
         for file_path in cached_files:
             if file_path not in current_files:
                 changes["removed"].append(file_path)
+                logger.info(f"Arquivo removido detectado: {file_path}")
         
         # Atualiza o cache
         self.cache["files"] = current_files
@@ -172,7 +187,7 @@ class ChangeDetector:
             latest_commit = list(repo.iter_commits('main', max_count=1))[0]
             latest_commit_hash = latest_commit.hexsha
         except Exception as e:
-            print(f"Erro ao obter último commit: {e}")
+            logger.error(f"Erro ao obter último commit: {e}")
             return changes
         
         # Compara com o cache
@@ -184,12 +199,14 @@ class ChangeDetector:
                 try:
                     new_commits = list(repo.iter_commits(f"{last_commit}..main"))
                     changes["new_commits"] = [commit.hexsha for commit in new_commits]
+                    logger.info(f"Detectados {len(changes['new_commits'])} novos commits")
                 except Exception as e:
-                    print(f"Erro ao obter novos commits: {e}")
+                    logger.error(f"Erro ao obter novos commits: {e}")
                     changes["new_commits"] = [latest_commit_hash]
             else:
                 # Se não houver commit anterior, considera o último commit como novo
                 changes["new_commits"] = [latest_commit_hash]
+                logger.info(f"Primeiro commit detectado: {latest_commit_hash}")
             
             # Atualiza o cache
             self.cache["git"] = {"last_commit": latest_commit_hash}
@@ -221,6 +238,67 @@ class IncrementalUpdater:
         # Inicializa o detector de mudanças
         self.change_detector = ChangeDetector(project_root)
     
+    def _determine_collection_for_markdown(self, file_path: str) -> str:
+        """
+        Determina a coleção apropriada para um arquivo Markdown.
+        
+        Args:
+            file_path: Caminho do arquivo Markdown.
+            
+        Returns:
+            Nome da coleção apropriada.
+        """
+        # Normaliza o caminho para garantir consistência entre sistemas operacionais
+        normalized_path = os.path.normpath(file_path).replace("\\", "/")
+        
+        # Verifica se é um ADR
+        if "/docs/adrs/" in normalized_path or "/ADRs/" in normalized_path or "/adr/" in normalized_path:
+            logger.info(f"Arquivo {file_path} classificado como ADR")
+            return "decisoes_arquiteturais"
+        
+        # Verifica se é um documento de visão do projeto
+        if "visao_projeto" in normalized_path or "visao-projeto" in normalized_path or "visao_do_projeto" in normalized_path:
+            logger.info(f"Arquivo {file_path} classificado como visão do projeto")
+            return "documentacao_arquitetura"
+        
+        # Verifica se é um documento de decisões arquiteturais
+        if "decisoes_arquiteturais" in normalized_path or "arquitetura" in normalized_path:
+            logger.info(f"Arquivo {file_path} classificado como decisão arquitetural")
+            return "decisoes_arquiteturais"
+        
+        # Verifica se é um documento relacionado a DDD
+        if "ddd" in normalized_path.lower() or "domain" in normalized_path.lower():
+            logger.info(f"Arquivo {file_path} classificado como documentação DDD")
+            return "documentacao_ddd"
+        
+        # Verifica se é um documento relacionado a tecnologias
+        if "tecnologia" in normalized_path.lower() or "tech" in normalized_path.lower():
+            logger.info(f"Arquivo {file_path} classificado como documentação de tecnologias")
+            return "documentacao_tecnologias"
+        
+        # Tenta determinar pelo conteúdo do arquivo
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read().lower()
+                
+                if "adr" in content[:500] or "architecture decision record" in content[:500]:
+                    logger.info(f"Arquivo {file_path} classificado como ADR pelo conteúdo")
+                    return "decisoes_arquiteturais"
+                
+                if "domain driven design" in content or "ddd" in content:
+                    logger.info(f"Arquivo {file_path} classificado como documentação DDD pelo conteúdo")
+                    return "documentacao_ddd"
+                
+                if "arquitetura" in content[:500] or "architecture" in content[:500]:
+                    logger.info(f"Arquivo {file_path} classificado como documentação de arquitetura pelo conteúdo")
+                    return "documentacao_arquitetura"
+        except Exception as e:
+            logger.warning(f"Erro ao ler conteúdo do arquivo {file_path}: {e}")
+        
+        # Padrão para documentos não classificados
+        logger.info(f"Arquivo {file_path} não classificado especificamente, usando coleção padrão")
+        return "documentacao_arquitetura"
+    
     def update_documents(self, file_paths: List[str]) -> Dict[str, List[str]]:
         """
         Atualiza documentos na base de conhecimento.
@@ -238,18 +316,26 @@ class IncrementalUpdater:
         
         for file_path in file_paths:
             try:
+                logger.info(f"Processando arquivo: {file_path}")
+                
                 # Determina a coleção apropriada
                 if file_path.endswith(".md"):
-                    collection_name = "decisoes_arquiteturais" if "decisoes_arquiteturais" in file_path else "documentacao_ddd"
+                    collection_name = self._determine_collection_for_markdown(file_path)
+                    logger.info(f"Arquivo {file_path} será indexado na coleção: {collection_name}")
+                    
                     # Atualiza o documento
                     self.document_collector.collect(file_path, collection_name)
-                    results["updated"].append(file_path)
+                    results["updated"].append(f"{file_path} -> {collection_name}")
+                    logger.info(f"Arquivo {file_path} indexado com sucesso na coleção {collection_name}")
+                    
                 elif file_path.endswith(".kt"):
                     # Atualiza o código
+                    logger.info(f"Arquivo Kotlin {file_path} será indexado na coleção: codigo_fonte")
                     self.code_collector.collect(file_path)
-                    results["updated"].append(file_path)
+                    results["updated"].append(f"{file_path} -> codigo_fonte")
+                    logger.info(f"Arquivo Kotlin {file_path} indexado com sucesso")
             except Exception as e:
-                print(f"Erro ao atualizar arquivo {file_path}: {e}")
+                logger.error(f"Erro ao atualizar arquivo {file_path}: {e}")
                 results["failed"].append(file_path)
         
         return results
@@ -272,6 +358,7 @@ class IncrementalUpdater:
         # Verifica se o diretório é um repositório Git
         git_dir = os.path.join(self.project_root, ".git")
         if not os.path.exists(git_dir):
+            logger.warning(f"Diretório {self.project_root} não é um repositório Git")
             return results
         
         # Abre o repositório
@@ -279,6 +366,8 @@ class IncrementalUpdater:
         
         for commit_hash in commit_hashes:
             try:
+                logger.info(f"Processando commit: {commit_hash}")
+                
                 # Obtém o commit
                 commit = repo.commit(commit_hash)
                 
@@ -314,8 +403,9 @@ Arquivos alterados:
                 )
                 
                 results["updated_commits"].append(commit_hash)
+                logger.info(f"Commit {commit_hash} indexado com sucesso")
             except Exception as e:
-                print(f"Erro ao atualizar commit {commit_hash}: {e}")
+                logger.error(f"Erro ao atualizar commit {commit_hash}: {e}")
                 results["failed_commits"].append(commit_hash)
         
         return results
@@ -327,6 +417,8 @@ Arquivos alterados:
         Returns:
             Dicionário com resultados da atualização.
         """
+        logger.info(f"Iniciando atualização incremental para o projeto: {self.project_root}")
+        
         results = {
             "files": {
                 "detected_changes": {},
@@ -339,24 +431,35 @@ Arquivos alterados:
         }
         
         # Detecta mudanças em arquivos
+        logger.info("Detectando mudanças em arquivos...")
         file_changes = self.change_detector.detect_file_changes()
         results["files"]["detected_changes"] = file_changes
         
         # Atualiza arquivos adicionados ou modificados
         files_to_update = file_changes["added"] + file_changes["modified"]
         if files_to_update:
+            logger.info(f"Atualizando {len(files_to_update)} arquivos...")
             update_results = self.update_documents(files_to_update)
             results["files"]["update_results"] = update_results
+            logger.info(f"Atualização de arquivos concluída: {len(update_results['updated'])} atualizados, {len(update_results['failed'])} falhas")
+        else:
+            logger.info("Nenhum arquivo para atualizar")
         
         # Detecta mudanças no Git
+        logger.info("Detectando mudanças no Git...")
         git_changes = self.change_detector.detect_git_changes()
         results["git"]["detected_changes"] = git_changes
         
         # Atualiza commits
         if git_changes["new_commits"]:
+            logger.info(f"Atualizando {len(git_changes['new_commits'])} commits...")
             update_results = self.update_git_history(git_changes["new_commits"])
             results["git"]["update_results"] = update_results
+            logger.info(f"Atualização de commits concluída: {len(update_results['updated_commits'])} atualizados, {len(update_results['failed_commits'])} falhas")
+        else:
+            logger.info("Nenhum commit novo para atualizar")
         
+        logger.info("Atualização incremental concluída")
         return results
 
 
@@ -436,23 +539,28 @@ class ConsistencyChecker:
             # Simplificação: considera que o arquivo está indexado se o nome do arquivo
             # estiver presente em algum metadado na coleção apropriada
             file_name = os.path.basename(file_path)
-            collection_name = "decisoes_arquiteturais" if "decisoes_arquiteturais" in file_path else "documentacao_ddd"
             
-            try:
-                # Consulta a coleção por metadados que contenham o nome do arquivo
-                query_results = self.vector_db.query(
-                    collection_name=collection_name,
-                    query_text=file_name,
-                    n_results=1,
-                    filter_criteria={"file_name": file_name}
-                )
-                
-                if query_results["metadatas"] and len(query_results["metadatas"][0]) > 0:
-                    results["markdown_files"]["indexed"] += 1
-                else:
-                    results["markdown_files"]["missing"].append(file_path)
-            except Exception as e:
-                print(f"Erro ao verificar arquivo {file_path}: {e}")
+            # Verifica em todas as coleções relevantes
+            indexed = False
+            for collection_name in ["decisoes_arquiteturais", "documentacao_ddd", "documentacao_arquitetura", "documentacao_tecnologias"]:
+                try:
+                    # Consulta a coleção por metadados que contenham o nome do arquivo
+                    query_results = self.vector_db.query(
+                        collection_name=collection_name,
+                        query_text=file_name,
+                        n_results=1,
+                        filter_criteria={"file_name": file_name}
+                    )
+                    
+                    if query_results["metadatas"] and len(query_results["metadatas"]) > 0:
+                        indexed = True
+                        break
+                except Exception as e:
+                    logger.error(f"Erro ao verificar indexação do arquivo {file_path}: {e}")
+            
+            if indexed:
+                results["markdown_files"]["indexed"] += 1
+            else:
                 results["markdown_files"]["missing"].append(file_path)
         
         # Verifica quais arquivos Kotlin estão indexados
@@ -468,172 +576,62 @@ class ConsistencyChecker:
                     filter_criteria={"file_name": file_name}
                 )
                 
-                if query_results["metadatas"] and len(query_results["metadatas"][0]) > 0:
+                if query_results["metadatas"] and len(query_results["metadatas"]) > 0:
                     results["kotlin_files"]["indexed"] += 1
                 else:
                     results["kotlin_files"]["missing"].append(file_path)
             except Exception as e:
-                print(f"Erro ao verificar arquivo {file_path}: {e}")
+                logger.error(f"Erro ao verificar indexação do arquivo {file_path}: {e}")
                 results["kotlin_files"]["missing"].append(file_path)
         
         return results
-    
-    def fix_inconsistencies(self, project_root: str) -> Dict[str, Any]:
-        """
-        Corrige inconsistências na base de conhecimento.
-        
-        Args:
-            project_root: Caminho raiz do projeto.
-            
-        Returns:
-            Dicionário com resultados da correção.
-        """
-        results = {
-            "fixed_files": [],
-            "failed_files": []
-        }
-        
-        # Verifica a cobertura de documentos
-        coverage = self.check_document_coverage(project_root)
-        
-        # Cria coletores
-        document_collector = DocumentCollector(self.vector_db)
-        code_collector = CodeCollector(self.vector_db)
-        
-        # Corrige arquivos Markdown ausentes
-        for file_path in coverage["markdown_files"]["missing"]:
-            try:
-                collection_name = "decisoes_arquiteturais" if "decisoes_arquiteturais" in file_path else "documentacao_ddd"
-                document_collector.collect(file_path, collection_name)
-                results["fixed_files"].append(file_path)
-            except Exception as e:
-                print(f"Erro ao corrigir arquivo {file_path}: {e}")
-                results["failed_files"].append(file_path)
-        
-        # Corrige arquivos Kotlin ausentes
-        for file_path in coverage["kotlin_files"]["missing"]:
-            try:
-                code_collector.collect(file_path)
-                results["fixed_files"].append(file_path)
-            except Exception as e:
-                print(f"Erro ao corrigir arquivo {file_path}: {e}")
-                results["failed_files"].append(file_path)
-        
-        return results
 
 
-class UpdateManager:
-    """Gerenciador de atualização da base de conhecimento."""
-    
-    def __init__(self, project_root: str, vector_db: Optional[VectorDatabase] = None):
-        """
-        Inicializa o gerenciador de atualização.
-        
-        Args:
-            project_root: Caminho raiz do projeto.
-            vector_db: Instância opcional da base de dados vetorial. Se não fornecida, uma nova será criada.
-        """
-        self.project_root = project_root
-        self.vector_db = vector_db if vector_db is not None else get_vector_database()
-        
-        # Inicializa componentes
-        self.updater = IncrementalUpdater(project_root, self.vector_db)
-        self.checker = ConsistencyChecker(self.vector_db)
-    
-    def initialize_knowledge_base(self) -> Dict[str, Any]:
-        """
-        Inicializa a base de conhecimento com todos os dados do projeto.
-        
-        Returns:
-            Dicionário com resultados da inicialização.
-        """
-        results = {
-            "initialization": "started",
-            "collection_results": {}
-        }
-        
-        # Cria o coletor de dados
-        data_collector = DataCollector(self.vector_db)
-        
-        # Coleta todos os dados
-        collection_results = data_collector.collect_all(self.project_root)
-        results["collection_results"] = collection_results
-        
-        # Verifica a consistência
-        consistency_results = self.checker.check_collections()
-        results["consistency"] = consistency_results
-        
-        results["initialization"] = "completed"
-        
-        return results
-    
-    def update_knowledge_base(self) -> Dict[str, Any]:
-        """
-        Atualiza a base de conhecimento de forma incremental.
-        
-        Returns:
-            Dicionário com resultados da atualização.
-        """
-        results = {
-            "update": "started",
-            "incremental_update": {},
-            "consistency_check": {},
-            "fixes": {}
-        }
-        
-        # Realiza a atualização incremental
-        incremental_results = self.updater.update_all()
-        results["incremental_update"] = incremental_results
-        
-        # Verifica a consistência
-        consistency_results = self.checker.check_collections()
-        results["consistency_check"] = consistency_results
-        
-        # Verifica a cobertura e corrige inconsistências
-        coverage_results = self.checker.check_document_coverage(self.project_root)
-        results["coverage"] = coverage_results
-        
-        # Se houver arquivos ausentes, corrige
-        missing_markdown = coverage_results["markdown_files"]["missing"]
-        missing_kotlin = coverage_results["kotlin_files"]["missing"]
-        
-        if missing_markdown or missing_kotlin:
-            fix_results = self.checker.fix_inconsistencies(self.project_root)
-            results["fixes"] = fix_results
-        
-        results["update"] = "completed"
-        
-        return results
-    
-    def schedule_periodic_update(self, interval_seconds: int = 3600) -> None:
-        """
-        Agenda atualizações periódicas da base de conhecimento.
-        
-        Args:
-            interval_seconds: Intervalo em segundos entre atualizações.
-        """
-        print(f"Agendando atualizações periódicas a cada {interval_seconds} segundos.")
-        
-        try:
-            while True:
-                print(f"Executando atualização em {datetime.now().isoformat()}")
-                self.update_knowledge_base()
-                print(f"Próxima atualização em {interval_seconds} segundos.")
-                time.sleep(interval_seconds)
-        except KeyboardInterrupt:
-            print("Atualização periódica interrompida pelo usuário.")
-
-
-# Função para criar uma instância do gerenciador de atualização
-def get_update_manager(project_root: str, vector_db: Optional[VectorDatabase] = None) -> UpdateManager:
+def get_update_manager(project_root: str, vector_db: Optional[VectorDatabase] = None) -> IncrementalUpdater:
     """
-    Cria e retorna uma instância do gerenciador de atualização.
+    Obtém um gerenciador de atualização para o projeto.
     
     Args:
         project_root: Caminho raiz do projeto.
-        vector_db: Instância opcional da base de dados vetorial.
+        vector_db: Instância opcional da base de dados vetorial. Se não fornecida, uma nova será criada.
         
     Returns:
-        Instância de UpdateManager.
+        Instância de IncrementalUpdater.
     """
-    return UpdateManager(project_root, vector_db)
+    return IncrementalUpdater(project_root, vector_db)
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Atualiza a base de conhecimento da assistente de IA.")
+    parser.add_argument("--project-root", type=str, default=os.getcwd(),
+                        help="Caminho raiz do projeto. Padrão: diretório atual.")
+    parser.add_argument("--update-interval", type=int, default=0,
+                        help="Intervalo em segundos para atualizações periódicas. Se 0, executa apenas uma vez.")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Ativa logs detalhados.")
+    
+    args = parser.parse_args()
+    
+    # Configura o nível de log
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    
+    # Obtém o gerenciador de atualização
+    updater = get_update_manager(args.project_root)
+    
+    # Executa a atualização
+    if args.update_interval > 0:
+        logger.info(f"Iniciando atualizações periódicas a cada {args.update_interval} segundos...")
+        
+        try:
+            while True:
+                results = updater.update_all()
+                logger.info(f"Resultados da atualização: {json.dumps(results, indent=2)}")
+                time.sleep(args.update_interval)
+        except KeyboardInterrupt:
+            logger.info("Atualizações periódicas interrompidas pelo usuário.")
+    else:
+        results = updater.update_all()
+        print(json.dumps(results, indent=2))
