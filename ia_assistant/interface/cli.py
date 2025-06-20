@@ -7,7 +7,8 @@ Implementa uma interface de linha de comando (CLI) para realizar consultas
 import os
 import sys
 import argparse
-from typing import List, Dict, Any, Optional, Union
+import re
+from typing import List, Dict, Any, Optional, Union, Tuple
 import json
 from langchain_openai import OpenAI
 from langchain.prompts import PromptTemplate
@@ -38,6 +39,23 @@ refinar sua pergunta.
 Resposta:
 """
 
+# Template específico para listagem de recursos
+LIST_RESOURCES_PROMPT_TEMPLATE = """
+Você é uma assistente de IA especializada no projeto de e-commerce. Sua tarefa atual é apresentar uma lista
+concisa dos recursos solicitados pelo usuário.
+
+Recursos disponíveis:
+{resources}
+
+Pergunta do usuário: {query}
+
+Apresente uma lista organizada dos recursos disponíveis, incluindo seus identificadores e títulos.
+Explique brevemente que o usuário pode solicitar detalhes específicos sobre qualquer um desses recursos
+mencionando seu identificador ou título em uma nova pergunta.
+
+Resposta:
+"""
+
 class QueryProcessor:
     """Processador de consultas para a assistente de IA."""
     
@@ -56,14 +74,315 @@ class QueryProcessor:
         # Inicializa o modelo de linguagem
         self.llm = OpenAI(model_name=model_name, temperature=0.2)
         
-        # Inicializa o template de prompt
+        # Inicializa os templates de prompt
         self.prompt_template = PromptTemplate(
             input_variables=["context", "query"],
             template=QUERY_PROMPT_TEMPLATE
         )
         
-        # Inicializa a chain de processamento
+        self.list_resources_template = PromptTemplate(
+            input_variables=["resources", "query"],
+            template=LIST_RESOURCES_PROMPT_TEMPLATE
+        )
+        
+        # Inicializa as chains de processamento
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
+        self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
+    
+    def _is_listing_query(self, query: str) -> bool:
+        """
+        Verifica se a consulta é uma solicitação de listagem de recursos.
+        
+        Args:
+            query: Texto da consulta.
+            
+        Returns:
+            True se for uma consulta de listagem, False caso contrário.
+        """
+        # Padrões para detectar consultas de listagem
+        listing_patterns = [
+            r"quais\s+(são\s+)?(os|as)?\s*adr",
+            r"listar?\s+(os|as)?\s*adr",
+            r"mostrar?\s+(os|as)?\s*adr",
+            r"exibir?\s+(os|as)?\s*adr",
+            r"quais\s+decisões\s+arquiteturais",
+            r"quais\s+documentos\s+temos",
+            r"listar?\s+documentos",
+            r"listar?\s+decisões",
+        ]
+        
+        # Converte a consulta para minúsculas para comparação case-insensitive
+        query_lower = query.lower()
+        
+        # Verifica se a consulta corresponde a algum dos padrões
+        for pattern in listing_patterns:
+            if re.search(pattern, query_lower):
+                return True
+        
+        return False
+    
+    def _get_resource_type_from_query(self, query: str) -> str:
+        """
+        Identifica o tipo de recurso solicitado na consulta.
+        
+        Args:
+            query: Texto da consulta.
+            
+        Returns:
+            Tipo de recurso (ex: "adr", "documento", "decisão").
+        """
+        query_lower = query.lower()
+        
+        if "adr" in query_lower:
+            return "adr"
+        elif "decisão" in query_lower or "decisoes" in query_lower:
+            return "decisão arquitetural"
+        elif "documento" in query_lower:
+            return "documento"
+        else:
+            return "recurso"
+    
+    def _get_specific_resource_id(self, query: str) -> Optional[str]:
+        """
+        Extrai o identificador de um recurso específico da consulta.
+        
+        Args:
+            query: Texto da consulta.
+            
+        Returns:
+            Identificador do recurso ou None se não for encontrado.
+        """
+        # Padrões para detectar referências a recursos específicos
+        patterns = [
+            r"adr[- ]?(\d+)",
+            r"adr[- ]?([a-zA-Z0-9_-]+)",
+            r"decisão[- ]?(\d+)",
+            r"decisao[- ]?(\d+)",
+        ]
+        
+        query_lower = query.lower()
+        
+        for pattern in patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                return match.group(1)
+        
+        return None
+    
+    def _get_resource_listing(self, resource_type: str) -> Dict[str, Any]:
+        """
+        Obtém uma listagem de recursos de um determinado tipo.
+        
+        Args:
+            resource_type: Tipo de recurso a ser listado.
+            
+        Returns:
+            Dicionário com os recursos encontrados.
+        """
+        # Mapeia tipos de recursos para coleções
+        collection_mapping = {
+            "adr": "decisoes_arquiteturais",
+            "decisão arquitetural": "decisoes_arquiteturais",
+            "documento": None,  # Busca em todas as coleções
+            "recurso": None,  # Busca em todas as coleções
+        }
+        
+        collection_name = collection_mapping.get(resource_type)
+        
+        # Consulta específica para ADRs
+        if resource_type == "adr":
+            # Consulta específica para encontrar ADRs
+            query_text = "ADR Architecture Decision Record"
+            
+            # Se temos uma coleção específica, consultamos apenas ela
+            if collection_name:
+                results = self.vector_db.query(
+                    collection_name=collection_name,
+                    query_text=query_text,
+                    n_results=10,  # Aumentamos para pegar mais ADRs
+                    include_metadata=True
+                )
+                
+                # Filtra os resultados para incluir apenas ADRs
+                filtered_results = {
+                    "documents": [],
+                    "metadatas": [],
+                    "ids": []
+                }
+                
+                if "documents" in results and results["documents"]:
+                    for i, doc in enumerate(results["documents"][0]):
+                        # Verifica se é um ADR pelo caminho ou conteúdo
+                        is_adr = False
+                        metadata = results["metadatas"][0][i] if "metadatas" in results and results["metadatas"][0] else {}
+                        
+                        if "source" in metadata:
+                            source = metadata["source"].lower()
+                            if "/adr" in source or "/adrs/" in source or "adr-" in source:
+                                is_adr = True
+                        
+                        if not is_adr and "adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]:
+                            is_adr = True
+                        
+                        if is_adr:
+                            filtered_results["documents"].append(doc)
+                            if "metadatas" in results and results["metadatas"][0]:
+                                filtered_results["metadatas"].append(metadata)
+                            if "ids" in results and results["ids"][0]:
+                                filtered_results["ids"].append(results["ids"][0][i])
+                
+                return filtered_results
+            
+            # Se não temos uma coleção específica, consultamos todas
+            else:
+                all_results = self.vector_db.query_all_collections(query_text, n_results=5)
+                
+                # Filtra os resultados para incluir apenas ADRs
+                filtered_results = {}
+                
+                for collection_name, results in all_results.items():
+                    if "error" in results:
+                        continue
+                    
+                    if "documents" in results and results["documents"]:
+                        filtered_collection = {
+                            "documents": [],
+                            "metadatas": [],
+                            "ids": []
+                        }
+                        
+                        for i, doc in enumerate(results["documents"][0]):
+                            # Verifica se é um ADR pelo caminho ou conteúdo
+                            is_adr = False
+                            metadata = results["metadatas"][0][i] if "metadatas" in results and results["metadatas"][0] else {}
+                            
+                            if "source" in metadata:
+                                source = metadata["source"].lower()
+                                if "/adr" in source or "/adrs/" in source or "adr-" in source:
+                                    is_adr = True
+                            
+                            if not is_adr and "adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]:
+                                is_adr = True
+                            
+                            if is_adr:
+                                filtered_collection["documents"].append(doc)
+                                if "metadatas" in results and results["metadatas"][0]:
+                                    filtered_collection["metadatas"].append(metadata)
+                                if "ids" in results and results["ids"][0]:
+                                    filtered_collection["ids"].append(results["ids"][0][i])
+                        
+                        if filtered_collection["documents"]:
+                            filtered_results[collection_name] = filtered_collection
+                
+                return filtered_results
+        
+        # Para outros tipos de recursos, usamos a lógica padrão
+        else:
+            if collection_name:
+                return self.vector_db.query(
+                    collection_name=collection_name,
+                    query_text=resource_type,
+                    n_results=10,
+                    include_metadata=True
+                )
+            else:
+                return self.vector_db.query_all_collections(resource_type, n_results=5)
+    
+    def _format_resource_listing(self, results: Dict[str, Any], resource_type: str) -> str:
+        """
+        Formata os resultados da listagem de recursos.
+        
+        Args:
+            results: Resultados da consulta.
+            resource_type: Tipo de recurso listado.
+            
+        Returns:
+            String formatada com a listagem de recursos.
+        """
+        formatted_parts = []
+        
+        # Verifica se temos resultados de uma única coleção ou de múltiplas coleções
+        if "documents" in results:
+            # Resultados de uma única coleção
+            formatted_parts.append(f"\n--- Lista de {resource_type.upper()}s encontrados ---\n")
+            
+            for i, doc in enumerate(results["documents"]):
+                # Extrai título e ID do documento
+                title = "Sem título"
+                doc_id = f"{i+1}"
+                
+                # Tenta extrair do metadata
+                if "metadatas" in results and i < len(results["metadatas"]):
+                    metadata = results["metadatas"][i]
+                    if "title" in metadata:
+                        title = metadata["title"]
+                    if "document_id" in metadata:
+                        doc_id = metadata["document_id"]
+                    elif "source" in metadata:
+                        # Tenta extrair ID do nome do arquivo
+                        source = metadata["source"]
+                        filename = os.path.basename(source)
+                        if filename.startswith("adr-") or filename.startswith("ADR-"):
+                            doc_id = filename.split(".")[0]
+                
+                # Tenta extrair do conteúdo
+                if title == "Sem título":
+                    # Procura por padrões de título no início do documento
+                    lines = doc.split("\n")
+                    for line in lines[:5]:
+                        if line.startswith("# "):
+                            title = line[2:].strip()
+                            break
+                
+                # Adiciona à lista formatada
+                formatted_parts.append(f"{doc_id}: {title}")
+        else:
+            # Resultados de múltiplas coleções
+            for collection_name, collection_results in results.items():
+                if "documents" not in collection_results or not collection_results["documents"]:
+                    continue
+                
+                formatted_parts.append(f"\n--- Lista de {resource_type.upper()}s em {collection_name} ---\n")
+                
+                for i, doc in enumerate(collection_results["documents"]):
+                    # Extrai título e ID do documento
+                    title = "Sem título"
+                    doc_id = f"{i+1}"
+                    
+                    # Tenta extrair do metadata
+                    if "metadatas" in collection_results and i < len(collection_results["metadatas"]):
+                        metadata = collection_results["metadatas"][i]
+                        if "title" in metadata:
+                            title = metadata["title"]
+                        if "document_id" in metadata:
+                            doc_id = metadata["document_id"]
+                        elif "source" in metadata:
+                            # Tenta extrair ID do nome do arquivo
+                            source = metadata["source"]
+                            filename = os.path.basename(source)
+                            if filename.startswith("adr-") or filename.startswith("ADR-"):
+                                doc_id = filename.split(".")[0]
+                    
+                    # Tenta extrair do conteúdo
+                    if title == "Sem título":
+                        # Procura por padrões de título no início do documento
+                        lines = doc.split("\n")
+                        for line in lines[:5]:
+                            if line.startswith("# "):
+                                title = line[2:].strip()
+                                break
+                    
+                    # Adiciona à lista formatada
+                    formatted_parts.append(f"{doc_id}: {title}")
+        
+        # Se não encontramos nenhum recurso
+        if len(formatted_parts) <= 1:
+            return f"Não foram encontrados {resource_type}s na base de conhecimento."
+        
+        # Adiciona instruções para o usuário
+        formatted_parts.append(f"\nPara obter detalhes sobre um {resource_type} específico, pergunte sobre ele usando seu ID ou título.")
+        
+        return "\n".join(formatted_parts)
     
     def _get_relevant_context(self, query: str, n_results: int = 5) -> str:
         """
@@ -76,8 +395,19 @@ class QueryProcessor:
         Returns:
             String com o contexto relevante.
         """
-        # Consulta todas as coleções
-        all_results = self.vector_db.query_all_collections(query, n_results)
+        # Verifica se a consulta é sobre um recurso específico
+        resource_id = self._get_specific_resource_id(query)
+        
+        # Se for sobre um recurso específico, ajusta a consulta para focar nele
+        if resource_id:
+            # Adiciona o ID à consulta para melhorar a relevância
+            enhanced_query = f"{query} {resource_id}"
+            
+            # Consulta todas as coleções
+            all_results = self.vector_db.query_all_collections(enhanced_query, n_results)
+        else:
+            # Consulta normal para todas as coleções
+            all_results = self.vector_db.query_all_collections(query, n_results)
         
         # Formata os resultados em um contexto
         context_parts = []
@@ -117,13 +447,31 @@ class QueryProcessor:
         Returns:
             Resposta contextualizada.
         """
-        # Obtém o contexto relevante
-        context = self._get_relevant_context(query)
+        # Verifica se é uma consulta de listagem
+        if self._is_listing_query(query):
+            # Identifica o tipo de recurso
+            resource_type = self._get_resource_type_from_query(query)
+            
+            # Obtém a listagem de recursos
+            results = self._get_resource_listing(resource_type)
+            
+            # Formata a listagem
+            resources_list = self._format_resource_listing(results, resource_type)
+            
+            # Executa a chain de processamento para listagem
+            response = self.list_resources_chain.run(resources=resources_list, query=query)
+            
+            return response
         
-        # Executa a chain de processamento
-        response = self.chain.run(context=context, query=query)
-        
-        return response
+        # Consulta normal
+        else:
+            # Obtém o contexto relevante
+            context = self._get_relevant_context(query)
+            
+            # Executa a chain de processamento
+            response = self.chain.run(context=context, query=query)
+            
+            return response
     
     def switch_model(self, model_name: str) -> None:
         """
@@ -138,6 +486,7 @@ class QueryProcessor:
         self.model_name = model_name
         self.llm = OpenAI(model_name=model_name, temperature=0.2)
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
+        self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
         
         print(f"Modelo alterado para: {model_name}")
 
