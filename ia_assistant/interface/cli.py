@@ -56,6 +56,23 @@ mencionando seu identificador ou título em uma nova pergunta.
 Resposta:
 """
 
+# Template específico para consulta de ADR específica
+ADR_DETAIL_PROMPT_TEMPLATE = """
+Você é uma assistente de IA especializada no projeto de e-commerce. Sua tarefa atual é apresentar informações
+detalhadas sobre um Architecture Decision Record (ADR) específico.
+
+ADR solicitado:
+{adr_content}
+
+Pergunta do usuário: {query}
+
+Apresente as informações do ADR de forma clara e estruturada, destacando o contexto da decisão, a decisão em si,
+as consequências e alternativas consideradas. Se houver informações adicionais relevantes no contexto, você pode
+mencioná-las brevemente.
+
+Resposta:
+"""
+
 class QueryProcessor:
     """Processador de consultas para a assistente de IA."""
     
@@ -85,9 +102,15 @@ class QueryProcessor:
             template=LIST_RESOURCES_PROMPT_TEMPLATE
         )
         
+        self.adr_detail_template = PromptTemplate(
+            input_variables=["adr_content", "query"],
+            template=ADR_DETAIL_PROMPT_TEMPLATE
+        )
+        
         # Inicializa as chains de processamento
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
+        self.adr_detail_chain = LLMChain(llm=self.llm, prompt=self.adr_detail_template)
     
     def _is_listing_query(self, query: str) -> bool:
         """
@@ -116,6 +139,37 @@ class QueryProcessor:
         
         # Verifica se a consulta corresponde a algum dos padrões
         for pattern in listing_patterns:
+            if re.search(pattern, query_lower):
+                return True
+        
+        return False
+    
+    def _is_specific_adr_query(self, query: str) -> bool:
+        """
+        Verifica se a consulta é sobre um ADR específico.
+        
+        Args:
+            query: Texto da consulta.
+            
+        Returns:
+            True se for uma consulta sobre um ADR específico, False caso contrário.
+        """
+        # Padrões para detectar consultas sobre ADRs específicos
+        adr_patterns = [
+            r"adr[- ]?(\d+)",
+            r"adr[- ]?([a-zA-Z0-9_-]+)",
+            r"sobre\s+a\s+adr",
+            r"sobre\s+o\s+adr",
+            r"detalhes\s+(d[ao])?\s+adr",
+            r"explicar?\s+(a|o)?\s+adr",
+            r"conteúdo\s+(d[ao])?\s+adr",
+        ]
+        
+        # Converte a consulta para minúsculas para comparação case-insensitive
+        query_lower = query.lower()
+        
+        # Verifica se a consulta corresponde a algum dos padrões
+        for pattern in adr_patterns:
             if re.search(pattern, query_lower):
                 return True
         
@@ -169,236 +223,176 @@ class QueryProcessor:
         
         return None
     
-    def _get_resource_listing(self, resource_type: str) -> Dict[str, Any]:
+    def _get_adr_listing(self) -> List[Dict[str, str]]:
         """
-        Obtém uma listagem de recursos de um determinado tipo.
+        Obtém uma listagem de ADRs do projeto.
         
-        Args:
-            resource_type: Tipo de recurso a ser listado.
-            
         Returns:
-            Dicionário com os recursos encontrados.
+            Lista de dicionários com informações sobre os ADRs.
         """
-        # Mapeia tipos de recursos para coleções
-        collection_mapping = {
-            "adr": "decisoes_arquiteturais",
-            "decisão arquitetural": "decisoes_arquiteturais",
-            "documento": None,  # Busca em todas as coleções
-            "recurso": None,  # Busca em todas as coleções
-        }
+        # Consulta específica para encontrar ADRs
+        query_text = "ADR Architecture Decision Record"
+        collection_name = "decisoes_arquiteturais"
         
-        collection_name = collection_mapping.get(resource_type)
+        # Consulta a coleção
+        results = self.vector_db.query(
+            collection_name=collection_name,
+            query_text=query_text,
+            n_results=15  # Aumentamos para pegar mais ADRs
+        )
         
-        # Consulta específica para ADRs
-        if resource_type == "adr":
-            # Consulta específica para encontrar ADRs
-            query_text = "ADR Architecture Decision Record"
-            
-            # Se temos uma coleção específica, consultamos apenas ela
-            if collection_name:
-                results = self.vector_db.query(
-                    collection_name=collection_name,
-                    query_text=query_text,
-                    n_results=10  # Aumentamos para pegar mais ADRs
-                )
-                
-                # Filtra os resultados para incluir apenas ADRs
-                filtered_results = {
-                    "documents": [],
-                    "metadatas": [],
-                    "ids": []
-                }
-                
-                if "documents" in results and results["documents"]:
-                    for i, doc in enumerate(results["documents"][0]):
-                        # Verifica se é um ADR pelo conteúdo
-                        is_adr = False
-                        
-                        # Verifica se há metadados disponíveis
-                        metadata = {}
-                        if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
-                            metadata = results["metadatas"][0][i]
-                            
-                            # Verifica se é um ADR pelo caminho no metadata
-                            if "source" in metadata:
-                                source = metadata["source"].lower()
-                                if "/adr" in source or "/adrs/" in source or "adr-" in source:
-                                    is_adr = True
-                        
-                        # Se não identificou pelo metadata, tenta pelo conteúdo
-                        if not is_adr and ("adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]):
-                            is_adr = True
-                        
-                        if is_adr:
-                            filtered_results["documents"].append(doc)
-                            
-                            # Adiciona metadata se disponível
-                            if metadata:
-                                filtered_results["metadatas"].append(metadata)
-                            
-                            # Adiciona ID se disponível
-                            if "ids" in results and results["ids"][0] and i < len(results["ids"][0]):
-                                filtered_results["ids"].append(results["ids"][0][i])
-                
-                return filtered_results
-            
-            # Se não temos uma coleção específica, consultamos todas
-            else:
-                all_results = self.vector_db.query_all_collections(query_text, n_results=5)
-                
-                # Filtra os resultados para incluir apenas ADRs
-                filtered_results = {}
-                
-                for collection_name, results in all_results.items():
-                    if "error" in results:
-                        continue
-                    
-                    if "documents" in results and results["documents"]:
-                        filtered_collection = {
-                            "documents": [],
-                            "metadatas": [],
-                            "ids": []
-                        }
-                        
-                        for i, doc in enumerate(results["documents"][0]):
-                            # Verifica se é um ADR pelo conteúdo
-                            is_adr = False
-                            
-                            # Verifica se há metadados disponíveis
-                            metadata = {}
-                            if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
-                                metadata = results["metadatas"][0][i]
-                                
-                                # Verifica se é um ADR pelo caminho no metadata
-                                if "source" in metadata:
-                                    source = metadata["source"].lower()
-                                    if "/adr" in source or "/adrs/" in source or "adr-" in source:
-                                        is_adr = True
-                            
-                            # Se não identificou pelo metadata, tenta pelo conteúdo
-                            if not is_adr and ("adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]):
-                                is_adr = True
-                            
-                            if is_adr:
-                                filtered_collection["documents"].append(doc)
-                                
-                                # Adiciona metadata se disponível
-                                if metadata:
-                                    filtered_collection["metadatas"].append(metadata)
-                                
-                                # Adiciona ID se disponível
-                                if "ids" in results and results["ids"][0] and i < len(results["ids"][0]):
-                                    filtered_collection["ids"].append(results["ids"][0][i])
-                        
-                        if filtered_collection["documents"]:
-                            filtered_results[collection_name] = filtered_collection
-                
-                return filtered_results
+        # Lista para armazenar os ADRs encontrados
+        adrs = []
         
-        # Para outros tipos de recursos, usamos a lógica padrão
-        else:
-            if collection_name:
-                return self.vector_db.query(
-                    collection_name=collection_name,
-                    query_text=resource_type,
-                    n_results=10
-                )
-            else:
-                return self.vector_db.query_all_collections(resource_type, n_results=5)
-    
-    def _format_resource_listing(self, results: Dict[str, Any], resource_type: str) -> str:
-        """
-        Formata os resultados da listagem de recursos.
+        # Conjunto para rastrear ADRs já processados (evitar duplicatas)
+        processed_adrs = set()
         
-        Args:
-            results: Resultados da consulta.
-            resource_type: Tipo de recurso listado.
-            
-        Returns:
-            String formatada com a listagem de recursos.
-        """
-        formatted_parts = []
-        
-        # Verifica se temos resultados de uma única coleção ou de múltiplas coleções
-        if "documents" in results:
-            # Resultados de uma única coleção
-            formatted_parts.append(f"\n--- Lista de {resource_type.upper()}s encontrados ---\n")
-            
-            for i, doc in enumerate(results["documents"]):
-                # Extrai título e ID do documento
-                title = "Sem título"
-                doc_id = f"{i+1}"
+        if "documents" in results and results["documents"]:
+            for i, doc in enumerate(results["documents"][0]):
+                # Verifica se há metadados disponíveis
+                metadata = {}
+                if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
+                    metadata = results["metadatas"][0][i]
                 
-                # Tenta extrair do metadata
-                if "metadatas" in results and i < len(results["metadatas"]):
-                    metadata = results["metadatas"][i]
-                    if "title" in metadata:
-                        title = metadata["title"]
-                    if "document_id" in metadata:
-                        doc_id = metadata["document_id"]
-                    elif "source" in metadata:
-                        # Tenta extrair ID do nome do arquivo
-                        source = metadata["source"]
-                        filename = os.path.basename(source)
-                        if filename.startswith("adr-") or filename.startswith("ADR-"):
-                            doc_id = filename.split(".")[0]
+                # Extrai informações do documento
+                source = metadata.get("source", "")
                 
-                # Tenta extrair do conteúdo
-                if title == "Sem título":
-                    # Procura por padrões de título no início do documento
-                    lines = doc.split("\n")
-                    for line in lines[:5]:
-                        if line.startswith("# "):
-                            title = line[2:].strip()
-                            break
+                # Verifica se é um ADR pelo caminho do arquivo
+                is_adr = False
+                if "/docs/adrs/" in source.lower():
+                    is_adr = True
                 
-                # Adiciona à lista formatada
-                formatted_parts.append(f"{doc_id}: {title}")
-        else:
-            # Resultados de múltiplas coleções
-            for collection_name, collection_results in results.items():
-                if "documents" not in collection_results or not collection_results["documents"]:
+                # Se não for um ADR pelo caminho, ignora
+                if not is_adr:
                     continue
                 
-                formatted_parts.append(f"\n--- Lista de {resource_type.upper()}s em {collection_name} ---\n")
+                # Extrai o ID e título do ADR
+                adr_id = ""
+                title = ""
                 
-                for i, doc in enumerate(collection_results["documents"]):
-                    # Extrai título e ID do documento
-                    title = "Sem título"
-                    doc_id = f"{i+1}"
-                    
-                    # Tenta extrair do metadata
-                    if "metadatas" in collection_results and i < len(collection_results["metadatas"]):
-                        metadata = collection_results["metadatas"][i]
-                        if "title" in metadata:
-                            title = metadata["title"]
-                        if "document_id" in metadata:
-                            doc_id = metadata["document_id"]
-                        elif "source" in metadata:
-                            # Tenta extrair ID do nome do arquivo
-                            source = metadata["source"]
-                            filename = os.path.basename(source)
-                            if filename.startswith("adr-") or filename.startswith("ADR-"):
-                                doc_id = filename.split(".")[0]
-                    
-                    # Tenta extrair do conteúdo
-                    if title == "Sem título":
-                        # Procura por padrões de título no início do documento
-                        lines = doc.split("\n")
-                        for line in lines[:5]:
-                            if line.startswith("# "):
-                                title = line[2:].strip()
-                                break
-                    
-                    # Adiciona à lista formatada
-                    formatted_parts.append(f"{doc_id}: {title}")
+                # Tenta extrair do nome do arquivo
+                filename = os.path.basename(source)
+                if filename.startswith(("adr-", "ADR-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9")):
+                    adr_id = os.path.splitext(filename)[0]
+                
+                # Tenta extrair o título do conteúdo
+                lines = doc.split("\n")
+                for line in lines[:5]:
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                
+                # Se não encontrou título, usa um genérico
+                if not title:
+                    title = f"ADR {adr_id}"
+                
+                # Cria um identificador único para evitar duplicatas
+                unique_id = f"{adr_id}_{title}"
+                
+                # Adiciona à lista se ainda não foi processado
+                if unique_id not in processed_adrs:
+                    adrs.append({
+                        "id": adr_id,
+                        "title": title,
+                        "source": source,
+                        "content": doc
+                    })
+                    processed_adrs.add(unique_id)
         
-        # Se não encontramos nenhum recurso
-        if len(formatted_parts) <= 1:
-            return f"Não foram encontrados {resource_type}s na base de conhecimento."
+        return adrs
+    
+    def _get_specific_adr(self, adr_id: str) -> Optional[Dict[str, str]]:
+        """
+        Obtém informações sobre um ADR específico.
         
-        # Adiciona instruções para o usuário
-        formatted_parts.append(f"\nPara obter detalhes sobre um {resource_type} específico, pergunte sobre ele usando seu ID ou título.")
+        Args:
+            adr_id: Identificador do ADR.
+            
+        Returns:
+            Dicionário com informações sobre o ADR ou None se não for encontrado.
+        """
+        # Consulta específica para encontrar o ADR
+        query_text = f"ADR {adr_id}"
+        collection_name = "decisoes_arquiteturais"
+        
+        # Consulta a coleção
+        results = self.vector_db.query(
+            collection_name=collection_name,
+            query_text=query_text,
+            n_results=5  # Limitamos para evitar excesso de tokens
+        )
+        
+        # Verifica se encontrou resultados
+        if "documents" not in results or not results["documents"]:
+            return None
+        
+        # Procura pelo ADR específico
+        for i, doc in enumerate(results["documents"][0]):
+            # Verifica se há metadados disponíveis
+            metadata = {}
+            if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
+                metadata = results["metadatas"][0][i]
+            
+            # Extrai informações do documento
+            source = metadata.get("source", "")
+            
+            # Verifica se é o ADR correto pelo caminho ou conteúdo
+            is_target_adr = False
+            
+            # Verifica pelo caminho
+            if "/docs/adrs/" in source.lower() and adr_id.lower() in source.lower():
+                is_target_adr = True
+            
+            # Verifica pelo conteúdo
+            if not is_target_adr:
+                lines = doc.split("\n")
+                for line in lines[:10]:
+                    if line.startswith("# ") and adr_id.lower() in line.lower():
+                        is_target_adr = True
+                        break
+            
+            # Se encontrou o ADR, retorna as informações
+            if is_target_adr:
+                # Extrai o título
+                title = ""
+                lines = doc.split("\n")
+                for line in lines[:5]:
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+                
+                # Se não encontrou título, usa um genérico
+                if not title:
+                    title = f"ADR {adr_id}"
+                
+                return {
+                    "id": adr_id,
+                    "title": title,
+                    "source": source,
+                    "content": doc
+                }
+        
+        return None
+    
+    def _format_adr_listing(self, adrs: List[Dict[str, str]]) -> str:
+        """
+        Formata a listagem de ADRs.
+        
+        Args:
+            adrs: Lista de dicionários com informações sobre os ADRs.
+            
+        Returns:
+            String formatada com a listagem de ADRs.
+        """
+        if not adrs:
+            return "Não foram encontrados ADRs na base de conhecimento."
+        
+        formatted_parts = ["\n--- Lista de ADRs encontrados ---\n"]
+        
+        for adr in adrs:
+            formatted_parts.append(f"{adr['id']}: {adr['title']}")
+        
+        formatted_parts.append("\nPara obter detalhes sobre um ADR específico, pergunte sobre ele usando seu ID ou título.")
         
         return "\n".join(formatted_parts)
     
@@ -465,20 +459,48 @@ class QueryProcessor:
         Returns:
             Resposta contextualizada.
         """
-        # Verifica se é uma consulta de listagem
-        if self._is_listing_query(query):
-            # Identifica o tipo de recurso
-            resource_type = self._get_resource_type_from_query(query)
-            
-            # Obtém a listagem de recursos
-            results = self._get_resource_listing(resource_type)
+        # Verifica se é uma consulta de listagem de ADRs
+        if self._is_listing_query(query) and "adr" in query.lower():
+            # Obtém a listagem de ADRs
+            adrs = self._get_adr_listing()
             
             # Formata a listagem
-            resources_list = self._format_resource_listing(results, resource_type)
+            resources_list = self._format_adr_listing(adrs)
             
             # Executa a chain de processamento para listagem
             response = self.list_resources_chain.run(resources=resources_list, query=query)
             
+            return response
+        
+        # Verifica se é uma consulta sobre um ADR específico
+        elif self._is_specific_adr_query(query):
+            # Tenta extrair o ID do ADR da consulta
+            adr_id = self._get_specific_resource_id(query)
+            
+            # Se não conseguiu extrair o ID, usa uma abordagem mais genérica
+            if not adr_id:
+                # Tenta encontrar o ADR pelo título ou conteúdo
+                adrs = self._get_adr_listing()
+                
+                # Procura por correspondências no título
+                query_lower = query.lower()
+                for adr in adrs:
+                    if adr['title'].lower() in query_lower or query_lower in adr['title'].lower():
+                        adr_id = adr['id']
+                        break
+            
+            # Se encontrou um ID, busca o ADR específico
+            if adr_id:
+                adr = self._get_specific_adr(adr_id)
+                
+                if adr:
+                    # Executa a chain de processamento para detalhes do ADR
+                    response = self.adr_detail_chain.run(adr_content=adr['content'], query=query)
+                    return response
+            
+            # Se não encontrou o ADR específico, usa a abordagem padrão
+            context = self._get_relevant_context(query, n_results=3)  # Reduz para evitar excesso de tokens
+            response = self.chain.run(context=context, query=query)
             return response
         
         # Consulta normal
@@ -505,6 +527,7 @@ class QueryProcessor:
         self.llm = OpenAI(model_name=model_name, temperature=0.2)
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
+        self.adr_detail_chain = LLMChain(llm=self.llm, prompt=self.adr_detail_template)
         
         print(f"Modelo alterado para: {model_name}")
 
