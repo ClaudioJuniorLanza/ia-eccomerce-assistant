@@ -199,8 +199,7 @@ class QueryProcessor:
                 results = self.vector_db.query(
                     collection_name=collection_name,
                     query_text=query_text,
-                    n_results=10,  # Aumentamos para pegar mais ADRs
-                    include_metadata=True
+                    n_results=10  # Aumentamos para pegar mais ADRs
                 )
                 
                 # Filtra os resultados para incluir apenas ADRs
@@ -212,23 +211,33 @@ class QueryProcessor:
                 
                 if "documents" in results and results["documents"]:
                     for i, doc in enumerate(results["documents"][0]):
-                        # Verifica se é um ADR pelo caminho ou conteúdo
+                        # Verifica se é um ADR pelo conteúdo
                         is_adr = False
-                        metadata = results["metadatas"][0][i] if "metadatas" in results and results["metadatas"][0] else {}
                         
-                        if "source" in metadata:
-                            source = metadata["source"].lower()
-                            if "/adr" in source or "/adrs/" in source or "adr-" in source:
-                                is_adr = True
+                        # Verifica se há metadados disponíveis
+                        metadata = {}
+                        if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
+                            metadata = results["metadatas"][0][i]
+                            
+                            # Verifica se é um ADR pelo caminho no metadata
+                            if "source" in metadata:
+                                source = metadata["source"].lower()
+                                if "/adr" in source or "/adrs/" in source or "adr-" in source:
+                                    is_adr = True
                         
-                        if not is_adr and "adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]:
+                        # Se não identificou pelo metadata, tenta pelo conteúdo
+                        if not is_adr and ("adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]):
                             is_adr = True
                         
                         if is_adr:
                             filtered_results["documents"].append(doc)
-                            if "metadatas" in results and results["metadatas"][0]:
+                            
+                            # Adiciona metadata se disponível
+                            if metadata:
                                 filtered_results["metadatas"].append(metadata)
-                            if "ids" in results and results["ids"][0]:
+                            
+                            # Adiciona ID se disponível
+                            if "ids" in results and results["ids"][0] and i < len(results["ids"][0]):
                                 filtered_results["ids"].append(results["ids"][0][i])
                 
                 return filtered_results
@@ -252,23 +261,33 @@ class QueryProcessor:
                         }
                         
                         for i, doc in enumerate(results["documents"][0]):
-                            # Verifica se é um ADR pelo caminho ou conteúdo
+                            # Verifica se é um ADR pelo conteúdo
                             is_adr = False
-                            metadata = results["metadatas"][0][i] if "metadatas" in results and results["metadatas"][0] else {}
                             
-                            if "source" in metadata:
-                                source = metadata["source"].lower()
-                                if "/adr" in source or "/adrs/" in source or "adr-" in source:
-                                    is_adr = True
+                            # Verifica se há metadados disponíveis
+                            metadata = {}
+                            if "metadatas" in results and results["metadatas"][0] and i < len(results["metadatas"][0]):
+                                metadata = results["metadatas"][0][i]
+                                
+                                # Verifica se é um ADR pelo caminho no metadata
+                                if "source" in metadata:
+                                    source = metadata["source"].lower()
+                                    if "/adr" in source or "/adrs/" in source or "adr-" in source:
+                                        is_adr = True
                             
-                            if not is_adr and "adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]:
+                            # Se não identificou pelo metadata, tenta pelo conteúdo
+                            if not is_adr and ("adr" in doc.lower()[:500] or "architecture decision record" in doc.lower()[:500]):
                                 is_adr = True
                             
                             if is_adr:
                                 filtered_collection["documents"].append(doc)
-                                if "metadatas" in results and results["metadatas"][0]:
+                                
+                                # Adiciona metadata se disponível
+                                if metadata:
                                     filtered_collection["metadatas"].append(metadata)
-                                if "ids" in results and results["ids"][0]:
+                                
+                                # Adiciona ID se disponível
+                                if "ids" in results and results["ids"][0] and i < len(results["ids"][0]):
                                     filtered_collection["ids"].append(results["ids"][0][i])
                         
                         if filtered_collection["documents"]:
@@ -282,8 +301,7 @@ class QueryProcessor:
                 return self.vector_db.query(
                     collection_name=collection_name,
                     query_text=resource_type,
-                    n_results=10,
-                    include_metadata=True
+                    n_results=10
                 )
             else:
                 return self.vector_db.query_all_collections(resource_type, n_results=5)
