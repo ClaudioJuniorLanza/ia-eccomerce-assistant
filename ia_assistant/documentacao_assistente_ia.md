@@ -42,8 +42,23 @@ Para utilizar a assistente, você precisará de:
    ```bash
    pip install chromadb langchain langchain_openai openai gitpython
    ```
+3. Ativar o ambiente virtual:
+   - Linux/macOS: `source venv/bin/activate`
+   - Windows: `venv\Scripts\activate`
 
-3. Configure a chave da API da OpenAI como uma variável de ambiente:
+
+4. Verificar se as dependências estão instaladas:
+   - `pip list | grep -E "chromadb|langchain|openai|gitpython"`
+
+Se faltar alguma, instalar: `pip install chromadb langchain langchain_openai openai gitpython`
+
+5. Configurar a chave da API da OpenAI:
+   - Linux/macOS: `export OPENAI_API_KEY="sua-chave-aqui"`
+   - Windows Powershell: `$env:OPENAI_API_KEY="sua-chave-aqui"`
+   - Windows CMD: `set OPENAI_API_KEY=sua-chave-aqui`
+
+
+6. Configure a chave da API da OpenAI como uma variável de ambiente:
    - Linux/macOS: `export OPENAI_API_KEY="sua-chave-aqui"`
    - Windows (PowerShell): `$env:OPENAI_API_KEY="sua-chave-aqui"`
    - Windows (CMD): `set OPENAI_API_KEY=sua-chave-aqui`
@@ -67,7 +82,7 @@ Este comando irá:
 Para interagir com a assistente via linha de comando:
 
 ```bash
-python -m ia_assistant.interface.cli
+python3 -m ia_assistant.interface.cli
 ```
 
 Comandos disponíveis na CLI:
