@@ -67,8 +67,8 @@ ADR solicitado:
 Pergunta do usuário: {query}
 
 Apresente as informações do ADR de forma clara e estruturada, destacando o contexto da decisão, a decisão em si,
-as consequências e alternativas consideradas. Se houver informações adicionais relevantes no contexto, você pode
-mencioná-las brevemente.
+as consequências e alternativas consideradas. Certifique-se de incluir todos os detalhes importantes do ADR,
+sem omitir nenhuma seção relevante. Sua resposta deve ser completa e abrangente.
 
 Resposta:
 """
@@ -88,8 +88,11 @@ class QueryProcessor:
         self.vector_db = vector_db if vector_db is not None else get_vector_database()
         self.model_name = model_name
         
-        # Inicializa o modelo de linguagem
-        self.llm = OpenAI(model_name=model_name, temperature=0.2)
+        # Inicializa o modelo de linguagem com configurações padrão
+        self.llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=500)
+        
+        # Inicializa o modelo específico para ADRs com limite de tokens maior
+        self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=1000)
         
         # Inicializa os templates de prompt
         self.prompt_template = PromptTemplate(
@@ -110,7 +113,7 @@ class QueryProcessor:
         # Inicializa as chains de processamento
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
-        self.adr_detail_chain = LLMChain(llm=self.llm, prompt=self.adr_detail_template)
+        self.adr_detail_chain = LLMChain(llm=self.adr_llm, prompt=self.adr_detail_template)
     
     def _is_listing_query(self, query: str) -> bool:
         """
@@ -163,6 +166,7 @@ class QueryProcessor:
             r"detalhes\s+(d[ao])?\s+adr",
             r"explicar?\s+(a|o)?\s+adr",
             r"conteúdo\s+(d[ao])?\s+adr",
+            r"informações\s+(d[ao])?\s+adr",
         ]
         
         # Converte a consulta para minúsculas para comparação case-insensitive
@@ -301,6 +305,88 @@ class QueryProcessor:
         
         return adrs
     
+    def _extract_essential_adr_content(self, content: str) -> str:
+        """
+        Extrai o conteúdo essencial de um ADR, removendo partes menos relevantes
+        para reduzir o número de tokens.
+        
+        Args:
+            content: Conteúdo completo do ADR.
+            
+        Returns:
+            Conteúdo essencial do ADR.
+        """
+        # Divide o conteúdo em seções
+        sections = []
+        current_section = []
+        current_heading = ""
+        
+        for line in content.split("\n"):
+            # Detecta cabeçalhos de seção
+            if line.startswith("# "):
+                # Se já temos uma seção, adiciona à lista
+                if current_heading and current_section:
+                    sections.append({
+                        "heading": current_heading,
+                        "content": "\n".join(current_section),
+                        "priority": 1  # Prioridade padrão
+                    })
+                
+                # Inicia nova seção
+                current_heading = line
+                current_section = []
+            elif line.startswith("## "):
+                # Se já temos uma seção, adiciona à lista
+                if current_heading and current_section:
+                    sections.append({
+                        "heading": current_heading,
+                        "content": "\n".join(current_section),
+                        "priority": 1  # Prioridade padrão
+                    })
+                
+                # Inicia nova seção
+                current_heading = line
+                current_section = []
+            else:
+                # Adiciona linha à seção atual
+                current_section.append(line)
+        
+        # Adiciona a última seção
+        if current_heading and current_section:
+            sections.append({
+                "heading": current_heading,
+                "content": "\n".join(current_section),
+                "priority": 1  # Prioridade padrão
+            })
+        
+        # Define prioridades para diferentes tipos de seções
+        for section in sections:
+            heading_lower = section["heading"].lower()
+            
+            # Título principal tem prioridade máxima
+            if "# adr" in heading_lower:
+                section["priority"] = 10
+            # Seções importantes têm prioridade alta
+            elif any(keyword in heading_lower for keyword in ["status", "contexto", "decisão", "consequências", "alternativas"]):
+                section["priority"] = 9
+            # Seções de detalhes têm prioridade média
+            elif any(keyword in heading_lower for keyword in ["detalhes", "implementação", "referências"]):
+                section["priority"] = 5
+            # Outras seções têm prioridade baixa
+            else:
+                section["priority"] = 1
+        
+        # Ordena as seções por prioridade
+        sections.sort(key=lambda x: x["priority"], reverse=True)
+        
+        # Monta o conteúdo essencial
+        essential_content = []
+        for section in sections:
+            essential_content.append(section["heading"])
+            essential_content.append(section["content"])
+        
+        return "\n".join(essential_content)
+    
     def _get_specific_adr(self, adr_id: str) -> Optional[Dict[str, str]]:
         """
         Obtém informações sobre um ADR específico.
@@ -365,11 +451,14 @@ class QueryProcessor:
                 if not title:
                     title = f"ADR {adr_id}"
                 
+                # Extrai o conteúdo essencial
+                essential_content = self._extract_essential_adr_content(doc)
+                
                 return {
                     "id": adr_id,
                     "title": title,
                     "source": source,
-                    "content": doc
+                    "content": essential_content
                 }
         
         return None
@@ -495,6 +584,7 @@ class QueryProcessor:
                 
                 if adr:
                     # Executa a chain de processamento para detalhes do ADR
+                    # Usa o modelo com limite de tokens maior
                     response = self.adr_detail_chain.run(adr_content=adr['content'], query=query)
                     return response
             
@@ -524,10 +614,15 @@ class QueryProcessor:
             raise ValueError(f"Modelo não suportado: {model_name}")
         
         self.model_name = model_name
-        self.llm = OpenAI(model_name=model_name, temperature=0.2)
+        
+        # Atualiza os modelos com os mesmos parâmetros
+        self.llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=500)
+        self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=1000)
+        
+        # Atualiza as chains
         self.chain = LLMChain(llm=self.llm, prompt=self.prompt_template)
         self.list_resources_chain = LLMChain(llm=self.llm, prompt=self.list_resources_template)
-        self.adr_detail_chain = LLMChain(llm=self.llm, prompt=self.adr_detail_template)
+        self.adr_detail_chain = LLMChain(llm=self.adr_llm, prompt=self.adr_detail_template)
         
         print(f"Modelo alterado para: {model_name}")
 
