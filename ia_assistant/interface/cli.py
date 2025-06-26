@@ -68,7 +68,7 @@ Pergunta do usuário: {query}
 
 Apresente as informações do ADR de forma clara e estruturada, destacando o contexto da decisão, a decisão em si,
 as consequências e alternativas consideradas. Certifique-se de incluir todos os detalhes importantes do ADR,
-sem omitir nenhuma seção relevante. Sua resposta deve ser completa e abrangente.
+sem omitir nenhuma seção relevante. Sua resposta deve ser completa e abrangente, fornecendo o máximo de detalhes possível.
 
 Resposta:
 """
@@ -92,7 +92,7 @@ class QueryProcessor:
         self.llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=500)
         
         # Inicializa o modelo específico para ADRs com limite de tokens maior
-        self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=1000)
+        self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=2000)
         
         # Inicializa os templates de prompt
         self.prompt_template = PromptTemplate(
