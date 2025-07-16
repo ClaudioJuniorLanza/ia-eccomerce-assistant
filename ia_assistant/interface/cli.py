@@ -68,7 +68,7 @@ Pergunta do usuário: {query}
 
 Apresente as informações do ADR de forma clara e estruturada, destacando o contexto da decisão, a decisão em si,
 as consequências e alternativas consideradas. Certifique-se de incluir todos os detalhes importantes do ADR,
-sem omitir nenhuma seção relevante. Sua resposta deve ser completa e abrangente.
+sem omitir nenhuma seção relevante. Sua resposta deve ser completa e abrangente, fornecendo o máximo de detalhes possível.
 
 IMPORTANTE: Não corte sua resposta no meio de uma frase ou parágrafo. Certifique-se de que todas as seções
 do ADR sejam apresentadas integralmente, especialmente as seções de Contexto, Decisão, Consequências e Alternativas.
@@ -94,7 +94,7 @@ class QueryProcessor:
         # Inicializa o modelo de linguagem com configurações padrão
         self.llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=500)
         
-        # Inicializa o modelo específico para ADRs com limite de tokens MUITO maior
+        # Inicializa o modelo específico para ADRs com limite de tokens maior
         self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=2000)
         
         # Inicializa os templates de prompt
@@ -591,9 +591,9 @@ class QueryProcessor:
                     if "metadatas" in results and results["metadatas"][0]:
                         metadata = results["metadatas"][0][i]
                         if "source" in metadata:
-                            context_parts.append(f"Fonte: {metadata['source']}")
+                            context_parts.append(f"Fonte: {metadata["source"]}")
                         if "document_type" in metadata:
-                            context_parts.append(f"Tipo: {metadata['document_type']}")
+                            context_parts.append(f"Tipo: {metadata["document_type"]}")
                     
                     # Adiciona o conteúdo do documento
                     context_parts.append(f"Conteúdo: {doc}\n")
@@ -640,8 +640,8 @@ class QueryProcessor:
                 # Procura por correspondências no título
                 query_lower = query.lower()
                 for adr in adrs:
-                    if adr['title'].lower() in query_lower or query_lower in adr['title'].lower():
-                        adr_id = adr['id']
+                    if adr["title"].lower() in query_lower or query_lower in adr["title"].lower():
+                        adr_id = adr["id"]
                         break
                 
                 # Se ainda não encontrou, usa "001" como padrão para a primeira consulta sobre ADRs
@@ -655,7 +655,7 @@ class QueryProcessor:
                 if adr:
                     # Executa a chain de processamento para detalhes do ADR
                     # Usa o modelo com limite de tokens maior
-                    response = self.adr_detail_chain.run(adr_content=adr['content'], query=query)
+                    response = self.adr_detail_chain.run(adr_content=adr["content"], query=query)
                     return response
             
             # Se não encontrou o ADR específico, usa a abordagem padrão
@@ -710,7 +710,9 @@ class CLI:
         self.query_processor = query_processor if query_processor is not None else QueryProcessor()
     
     def _print_header(self):
-        """Imprime o cabeçalho da CLI."""
+        """
+        Imprime o cabeçalho da CLI.
+        """
         print("\n" + "="*80)
         print("  Assistente de IA para o Projeto E-commerce  ".center(80, "="))
         print("="*80)
@@ -752,7 +754,9 @@ class CLI:
             return True
     
     def run(self):
-        """Executa a interface de linha de comando."""
+        """
+        Executa a interface de linha de comando.
+        """
         self._print_header()
         
         while True:
@@ -800,7 +804,9 @@ class CLI:
 
 
 def main():
-    """Função principal para execução da CLI."""
+    """
+    Função principal para execução da CLI.
+    """
     args = CLI.parse_args()
     
     # Define o modelo a ser utilizado
@@ -827,3 +833,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
