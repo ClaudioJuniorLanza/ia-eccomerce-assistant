@@ -21,7 +21,7 @@ repositories {
 }
 
 dependencies {
-    implementation(enforcedPlatform("io.quarkus.platform:quarkus-bom:3.24.0"))
+    implementation(enforcedPlatform("io.quarkus.platform:quarkus-bom:3.24.1"))
     implementation(kotlin("stdlib-jdk8"))
     implementation("io.quarkus:quarkus-rest-kotlin-serialization")
     implementation("io.quarkus:quarkus-kotlin")
