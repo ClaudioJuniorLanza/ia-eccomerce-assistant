@@ -591,7 +591,7 @@ class QueryProcessor:
                     if "metadatas" in results and results["metadatas"][0]:
                         metadata = results["metadatas"][0][i]
                         if "source" in metadata:
-                            context_parts.append(f"Fonte: {metadata["source"]}")
+                            context_parts.append(f"Fonte: {metadata['source']}")
                         if "document_type" in metadata:
                             context_parts.append(f"Tipo: {metadata["document_type"]}")
                     
