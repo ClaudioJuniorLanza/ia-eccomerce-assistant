@@ -593,7 +593,7 @@ class QueryProcessor:
                         if "source" in metadata:
                             context_parts.append(f"Fonte: {metadata['source']}")
                         if "document_type" in metadata:
-                            context_parts.append(f"Tipo: {metadata["document_type"]}")
+                            context_parts.append(f"Tipo: {metadata['document_type']}")
                     
                     # Adiciona o conteúdo do documento
                     context_parts.append(f"Conteúdo: {doc}\n")
