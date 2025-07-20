@@ -33,6 +33,13 @@ try:
 except ImportError:
     VECTOR_DB_AVAILABLE = False
 
+# Importa analisador de impacto
+try:
+    from ia_assistant.analysis.impact_analyzer import ImpactAnalyzer, impact_analyzer
+    IMPACT_ANALYZER_AVAILABLE = True
+except ImportError:
+    IMPACT_ANALYZER_AVAILABLE = False
+
 class ChangeType(Enum):
     """Tipos de mudanças detectadas."""
     FILE_ADDED = "file_added"
@@ -294,6 +301,10 @@ class KnowledgeBaseMonitor:
             
             # Determina impacto no cache
             self._invalidate_cache_if_needed(change)
+            
+            # Analisa impacto se disponível
+            if IMPACT_ANALYZER_AVAILABLE and change.change_type in [ChangeType.CONTENT_CHANGED, ChangeType.FILE_ADDED, ChangeType.FILE_DELETED]:
+                self._analyze_change_impact(change)
         
         # Limita histórico
         if len(self.change_history) > 100:
@@ -432,6 +443,41 @@ class KnowledgeBaseMonitor:
             if changes:
                 self._handle_changes(changes)
             return changes
+
+    def _analyze_change_impact(self, change: ChangeEvent):
+        """Analisa o impacto da mudança detectada."""
+        global impact_analyzer
+        
+        try:
+            if not IMPACT_ANALYZER_AVAILABLE:
+                return
+            
+            # Inicializa analisador se necessário
+            if impact_analyzer is None:
+                impact_analyzer = ImpactAnalyzer(self.base_paths)
+            
+            # Analisa impacto
+            analysis = impact_analyzer.analyze_impact(change.file_path)
+            
+            # Log do resultado
+            logger.info(f"Análise de impacto: {analysis.impact_level.value} - {len(analysis.affected_files)} arquivos afetados")
+            
+            # Log das recomendações
+            for recommendation in analysis.recommendations:
+                logger.info(f"Recomendação: {recommendation}")
+            
+        except Exception as e:
+            logger.error(f"Erro ao analisar impacto: {e}")
+    
+    def get_impact_analysis(self, file_path: str) -> Optional[Any]:
+        """Obtém análise de impacto para um arquivo específico."""
+        try:
+            if IMPACT_ANALYZER_AVAILABLE and impact_analyzer:
+                return impact_analyzer.analyze_impact(file_path)
+        except Exception as e:
+            logger.error(f"Erro ao obter análise de impacto: {e}")
+        
+        return None
 
 class FileChangeHandler(FileSystemEventHandler):
     """Handler para eventos de mudança de arquivo."""
