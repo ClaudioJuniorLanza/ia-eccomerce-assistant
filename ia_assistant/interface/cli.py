@@ -17,6 +17,7 @@ from langchain.chains import LLMChain
 # Importa a base de dados vetorial
 from ia_assistant.database.vector_db import get_vector_database, VectorDatabase
 from ia_assistant.interface.prompt_templates import prompt_optimizer, QueryType
+from ia_assistant.cache.intelligent_cache import intelligent_cache, CacheStrategy
 
 # Configuração de modelos da OpenAI
 GPT_3_5_MODEL = "gpt-3.5-turbo-instruct"  # Modelo mais econômico
@@ -670,7 +671,7 @@ class QueryProcessor:
     
     def _process_optimized_query(self, query: str) -> str:
         """
-        Processa uma consulta usando prompts otimizados.
+        Processa uma consulta usando prompts otimizados e cache inteligente.
         
         Args:
             query: Consulta do usuário
@@ -679,6 +680,9 @@ class QueryProcessor:
             Resposta otimizada
         """
         try:
+            # Detecta o tipo de consulta
+            query_type = prompt_optimizer.detect_query_type(query)
+            
             # Obtém o contexto relevante
             context = self._get_relevant_context(query)
             
@@ -688,6 +692,22 @@ class QueryProcessor:
                 relevant_docs=context,
                 project_context="Projeto de e-commerce com arquitetura hexagonal, DDD, Kotlin e Quarkus"
             )
+            
+            # Tenta obter do cache primeiro
+            cache_result = intelligent_cache.get(
+                query=query,
+                query_type=query_type.value,
+                prompt_template=prompt_data['system_prompt'],
+                strategy=CacheStrategy.ADAPTIVE
+            )
+            
+            if cache_result:
+                response, cache_metadata = cache_result
+                logger.info(f"Cache hit: {cache_metadata['cache_type']} - Tokens saved: {cache_metadata['tokens_saved']}")
+                return response
+            
+            # Se não encontrou no cache, processa normalmente
+            logger.info("Cache miss - processando consulta...")
             
             # Cria o modelo com parâmetros otimizados
             optimized_llm = OpenAI(
@@ -704,6 +724,20 @@ class QueryProcessor:
             
             # Executa a consulta
             response = optimized_llm.invoke(messages)
+            
+            # Estima tokens e custo (aproximação)
+            estimated_tokens = len(response.content.split()) * 1.3  # Aproximação
+            estimated_cost = estimated_tokens * 0.000002  # Custo aproximado por token
+            
+            # Armazena no cache
+            intelligent_cache.put(
+                query=query,
+                response=response.content,
+                query_type=query_type.value,
+                prompt_template=prompt_data['system_prompt'],
+                tokens_used=int(estimated_tokens),
+                cost_estimate=estimated_cost
+            )
             
             return response.content
             
