@@ -19,6 +19,7 @@ from ia_assistant.database.vector_db import get_vector_database, VectorDatabase
 from ia_assistant.interface.prompt_templates import prompt_optimizer, QueryType
 from ia_assistant.cache.intelligent_cache import intelligent_cache, CacheStrategy
 from ia_assistant.monitoring.change_detector import KnowledgeBaseMonitor, change_detector
+from ia_assistant.proactive.suggestion_engine import ProactiveSuggestionEngine, suggestion_engine
 
 # Configuração de modelos da OpenAI
 GPT_3_5_MODEL = "gpt-3.5-turbo-instruct"  # Modelo mais econômico
@@ -104,6 +105,10 @@ class QueryProcessor:
         
         # Inicializa detector de mudanças se não existir
         self._initialize_change_detector()
+        
+        # Inicializa motor de sugestões proativas
+        self._initialize_suggestion_engine()
+        
         self.prompt_template = PromptTemplate(
             input_variables=["context", "query"],
             template=QUERY_PROMPT_TEMPLATE
@@ -675,7 +680,7 @@ class QueryProcessor:
     
     def _process_optimized_query(self, query: str) -> str:
         """
-        Processa uma consulta usando prompts otimizados e cache inteligente.
+        Processa consulta com otimização de prompts e cache inteligente.
         
         Args:
             query: Consulta do usuário
@@ -683,19 +688,16 @@ class QueryProcessor:
         Returns:
             Resposta otimizada
         """
+        import time
+        
+        start_time = time.time()
+        
         try:
-            # Detecta o tipo de consulta
+            # Detecta tipo de consulta
             query_type = prompt_optimizer.detect_query_type(query)
             
-            # Obtém o contexto relevante
-            context = self._get_relevant_context(query)
-            
-            # Otimiza o prompt baseado no tipo de consulta
-            prompt_data = prompt_optimizer.optimize_prompt(
-                query=query,
-                relevant_docs=context,
-                project_context="Projeto de e-commerce com arquitetura hexagonal, DDD, Kotlin e Quarkus"
-            )
+            # Otimiza prompt
+            prompt_data = prompt_optimizer.optimize_prompt(query, query_type)
             
             # Tenta obter do cache primeiro
             cache_result = intelligent_cache.get(
@@ -705,9 +707,23 @@ class QueryProcessor:
                 strategy=CacheStrategy.ADAPTIVE
             )
             
+            cache_hit = cache_result is not None
+            
             if cache_result:
                 response, cache_metadata = cache_result
                 logger.info(f"Cache hit: {cache_metadata['cache_type']} - Tokens saved: {cache_metadata['tokens_saved']}")
+                
+                # Registra consulta para análise proativa
+                if suggestion_engine:
+                    response_time = (time.time() - start_time) * 1000  # ms
+                    suggestion_engine.record_query(
+                        query=query,
+                        response_time=response_time,
+                        cache_hit=True,
+                        query_type=query_type.value,
+                        tokens_used=cache_metadata.get('tokens_saved', 0)
+                    )
+                
                 return response
             
             # Se não encontrou no cache, processa normalmente
@@ -742,6 +758,17 @@ class QueryProcessor:
                 tokens_used=int(estimated_tokens),
                 cost_estimate=estimated_cost
             )
+            
+            # Registra consulta para análise proativa
+            if suggestion_engine:
+                response_time = (time.time() - start_time) * 1000  # ms
+                suggestion_engine.record_query(
+                    query=query,
+                    response_time=response_time,
+                    cache_hit=False,
+                    query_type=query_type.value,
+                    tokens_used=int(estimated_tokens)
+                )
             
             return response.content
             
@@ -801,6 +828,21 @@ class QueryProcessor:
                 logger.info(f"Detector de mudanças iniciado para: {existing_paths}")
             else:
                 logger.warning("Nenhum caminho válido encontrado para monitoramento")
+
+    def _initialize_suggestion_engine(self):
+        """Inicializa o motor de sugestões proativas."""
+        global suggestion_engine
+        
+        if suggestion_engine is None:
+            suggestion_engine = ProactiveSuggestionEngine(
+                cache_manager=intelligent_cache,
+                change_detector=change_detector,
+                impact_analyzer=None  # Será inicializado se disponível
+            )
+            
+            logger.info("Motor de sugestões proativas inicializado")
+        else:
+            logger.info("Motor de sugestões proativas já inicializado")
 
 
 class CLI:
