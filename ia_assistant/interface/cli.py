@@ -18,6 +18,7 @@ from langchain.chains import LLMChain
 from ia_assistant.database.vector_db import get_vector_database, VectorDatabase
 from ia_assistant.interface.prompt_templates import prompt_optimizer, QueryType
 from ia_assistant.cache.intelligent_cache import intelligent_cache, CacheStrategy
+from ia_assistant.monitoring.change_detector import KnowledgeBaseMonitor, change_detector
 
 # Configuração de modelos da OpenAI
 GPT_3_5_MODEL = "gpt-3.5-turbo-instruct"  # Modelo mais econômico
@@ -100,6 +101,9 @@ class QueryProcessor:
         self.adr_llm = OpenAI(model_name=model_name, temperature=0.2, max_tokens=2000)
         
         # Inicializa os templates de prompt
+        
+        # Inicializa detector de mudanças se não existir
+        self._initialize_change_detector()
         self.prompt_template = PromptTemplate(
             input_variables=["context", "query"],
             template=QUERY_PROMPT_TEMPLATE
@@ -769,6 +773,34 @@ class QueryProcessor:
         self.adr_detail_chain = LLMChain(llm=self.adr_llm, prompt=self.adr_detail_template)
         
         print(f"Modelo alterado para: {model_name}")
+    
+    def _initialize_change_detector(self):
+        """Inicializa o detector de mudanças."""
+        global change_detector
+        
+        if change_detector is None:
+            # Caminhos para monitorar
+            base_paths = [
+                os.path.join(os.path.dirname(__file__), "..", "docs"),
+                os.path.join(os.path.dirname(__file__), "..", "ia_assistant"),
+                os.path.join(os.path.dirname(__file__), "..", "src")
+            ]
+            
+            # Filtra apenas caminhos que existem
+            existing_paths = [path for path in base_paths if os.path.exists(path)]
+            
+            if existing_paths:
+                change_detector = KnowledgeBaseMonitor(
+                    base_paths=existing_paths,
+                    cache_manager=intelligent_cache,
+                    check_interval=60  # Verifica a cada minuto
+                )
+                
+                # Inicia monitoramento
+                change_detector.start_monitoring()
+                logger.info(f"Detector de mudanças iniciado para: {existing_paths}")
+            else:
+                logger.warning("Nenhum caminho válido encontrado para monitoramento")
 
 
 class CLI:

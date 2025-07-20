@@ -268,6 +268,50 @@ class VectorDatabase:
             stats[collection_name] = self.get_collection_stats(collection_name)
         
         return stats
+    
+    def reload_documents(self):
+        """
+        Recarrega documentos na base vetorial.
+        Útil quando há mudanças na base de conhecimento.
+        """
+        try:
+            logger.info("Recarregando documentos na base vetorial...")
+            
+            # Recarrega todos os documentos das coleções
+            for collection_name in self.collections:
+                logger.info(f"Recarregando coleção: {collection_name}")
+                
+                # Limpa a coleção atual
+                collection = self.collections[collection_name]
+                collection.delete(where={})
+                
+                # Recarrega documentos da coleção
+                self._load_documents_for_collection(collection_name)
+            
+            logger.info("Documentos recarregados com sucesso")
+            
+        except Exception as e:
+            logger.error(f"Erro ao recarregar documentos: {e}")
+            raise
+    
+    def _load_documents_for_collection(self, collection_name: str):
+        """
+        Carrega documentos para uma coleção específica.
+        
+        Args:
+            collection_name: Nome da coleção
+        """
+        try:
+            # Implementação específica para cada coleção
+            if collection_name == "adrs":
+                self._load_adr_documents()
+            elif collection_name == "docs":
+                self._load_documentation()
+            elif collection_name == "code":
+                self._load_code_documents()
+            
+        except Exception as e:
+            logger.error(f"Erro ao carregar documentos para {collection_name}: {e}")
 
 
 # Importa a versão robusta
