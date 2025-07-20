@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Importa os componentes da assistente
 from ia_assistant.database.vector_db import get_vector_database
+from ia_assistant.database.robust_vector_db import get_robust_vector_database
 from ia_assistant.data_collector.collectors import DataCollector
 from ia_assistant.knowledge_processor.updater import UpdateManager
 from ia_assistant.interface.cli import QueryProcessor
@@ -30,6 +31,20 @@ def initialize_knowledge_base(project_root: str) -> Dict[str, Any]:
     """
     print("\n=== Inicializando Base de Conhecimento ===")
     
+    # Testa a base de dados robusta primeiro
+    print("🛡️  Testando base de dados robusta...")
+    robust_db = get_robust_vector_database()
+    
+    # Verifica health check
+    health_status = robust_db.health_check()
+    print(f"📊 Status da base de dados: {health_status['status']}")
+    print(f"🔗 Conexão: {health_status['connection']}")
+    
+    if health_status['status'] == 'healthy':
+        print("✅ Base de dados robusta funcionando corretamente")
+    else:
+        print(f"⚠️  Base de dados com problemas: {health_status.get('error', 'Erro desconhecido')}")
+    
     # Cria a base de dados vetorial
     vector_db = get_vector_database()
     
@@ -45,6 +60,15 @@ def initialize_knowledge_base(project_root: str) -> Dict[str, Any]:
     # Exibe estatísticas das coleções
     for collection_name, stats in results["consistency"].items():
         print(f"- Coleção '{collection_name}': {stats['document_count']} documentos")
+    
+    # Exibe métricas de performance
+    print("\n📈 Métricas de Performance:")
+    metrics = robust_db.get_metrics()
+    for key, value in metrics.items():
+        if isinstance(value, float):
+            print(f"  {key}: {value:.2f}")
+        else:
+            print(f"  {key}: {value}")
     
     return results
 

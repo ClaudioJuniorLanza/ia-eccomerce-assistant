@@ -270,12 +270,18 @@ class VectorDatabase:
         return stats
 
 
+# Importa a versão robusta
+from .robust_vector_db import get_robust_vector_database, RobustVectorDatabase
+
 # Função para criar uma instância da base de dados vetorial
 def get_vector_database() -> VectorDatabase:
     """
-    Cria e retorna uma instância da base de dados vetorial.
+    Cria e retorna uma instância robusta da base de dados vetorial.
     
     Returns:
-        Instância de VectorDatabase.
+        Instância robusta da base de dados vetorial.
     """
-    return VectorDatabase()
+    return get_robust_vector_database()
+
+# Mantém compatibilidade com a interface anterior
+VectorDatabase = RobustVectorDatabase
