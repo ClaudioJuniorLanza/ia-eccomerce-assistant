@@ -16,6 +16,7 @@ from langchain.chains import LLMChain
 
 # Importa a base de dados vetorial
 from ia_assistant.database.vector_db import get_vector_database, VectorDatabase
+from ia_assistant.interface.prompt_templates import prompt_optimizer, QueryType
 
 # Configuração de modelos da OpenAI
 GPT_3_5_MODEL = "gpt-3.5-turbo-instruct"  # Modelo mais econômico
@@ -665,12 +666,51 @@ class QueryProcessor:
         
         # Consulta normal
         else:
+            return self._process_optimized_query(query)
+    
+    def _process_optimized_query(self, query: str) -> str:
+        """
+        Processa uma consulta usando prompts otimizados.
+        
+        Args:
+            query: Consulta do usuário
+            
+        Returns:
+            Resposta otimizada
+        """
+        try:
             # Obtém o contexto relevante
             context = self._get_relevant_context(query)
             
-            # Executa a chain de processamento
-            response = self.chain.run(context=context, query=query)
+            # Otimiza o prompt baseado no tipo de consulta
+            prompt_data = prompt_optimizer.optimize_prompt(
+                query=query,
+                relevant_docs=context,
+                project_context="Projeto de e-commerce com arquitetura hexagonal, DDD, Kotlin e Quarkus"
+            )
             
+            # Cria o modelo com parâmetros otimizados
+            optimized_llm = OpenAI(
+                model_name=self.model_name,
+                temperature=prompt_data['temperature'],
+                max_tokens=prompt_data['max_tokens']
+            )
+            
+            # Cria as mensagens
+            messages = [
+                SystemMessage(content=prompt_data['system_prompt']),
+                HumanMessage(content=prompt_data['user_prompt'])
+            ]
+            
+            # Executa a consulta
+            response = optimized_llm.invoke(messages)
+            
+            return response.content
+            
+        except Exception as e:
+            # Fallback para o método original em caso de erro
+            context = self._get_relevant_context(query)
+            response = self.chain.run(context=context, query=query)
             return response
     
     def switch_model(self, model_name: str) -> None:
